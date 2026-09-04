@@ -1,7 +1,12 @@
 # The local-chain twin of connector.toml.
 #
-# Identical in every way that matters -- same routes, same prices, same operator
-# surface -- except that it settles on a local anvil instead of Base Sepolia.
+# Same routes, same decimal price, same operator surface -- but it settles on a
+# local anvil instead of Ethereum mainnet.
+#
+# The base-unit `price` below differs from connector.toml and that is correct:
+# the local mock USDC has 6 decimals where ANYONE has 18, so the same 0.01 is a
+# different number of base units. What must match across both files is the
+# DECIMAL price the minter signs and the issuer checks: 0.01.
 # Used by `make local-up`, through compose.local.yml.
 #
 # Kept as a separate file because the connector reads exactly one TOML and has

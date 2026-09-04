@@ -30,16 +30,23 @@ http_endpoint = "http://127.0.0.1:3000/ilp"
 
 # --- Routes -----------------------------------------------------------------
 #
-# PRICE COUPLING: 10000 base units / 10^6 (USDC decimals) = 0.01 USDC, which
-# must equal the issuer's BUNDLE_PRICE exactly. The issuer verifies the amount
-# inside the signed claim against its own BUNDLE_PRICE, so if these three drift
-# -- this file, MINTER_BUNDLE_PRICE and ISSUER_BUNDLE_PRICE in compose.yml --
-# every paid request returns 402 CLAIM_INVALID. Change all three together.
+# PRICE COUPLING: 10000000000000000 base units / 10^18 (ANYONE decimals) = 0.01
+# ANYONE, which must equal the issuer's BUNDLE_PRICE exactly. The issuer
+# verifies the amount inside the signed claim against its own BUNDLE_PRICE, so
+# if these three drift -- this file, and BUNDLE_PRICE on both the claim-minter
+# and the issuer in compose.yml -- every paid request returns 402 CLAIM_INVALID.
+#
+# Only the base-unit figure changes with the token; the decimal "0.01" that the
+# minter signs and the issuer checks stays the same. Recompute this number
+# whenever the token changes: the exponent is the token's own decimals().
+#
+# 0.01 ANYONE buys a bundle of 10 credentials. Set a price that is
+# commercially real for you before taking payment from anyone.
 
 [[routes]]
 prefix = "g.anyone.credentials"
 handler_url = "http://claim-minter:8080/"
-price = 10000
+price = 10000000000000000
 
 # The key document is free: a buyer needs the epoch key before it can blind
 # anything, and charging for it makes the protocol undiscoverable.
@@ -57,11 +64,26 @@ price = 0
 # /healthz is deliberately NOT routed. The connector's own free, unauthenticated
 # /ilp/identity is the public liveness signal; the issuer's health stays inside.
 
+# ============================================================================
+# ETHEREUM MAINNET. THIS IS REAL MONEY.
+#
+# The settlement key at data/evm.key pays real gas and holds this node's real
+# earnings. `make keys` generates throwaway key material; do not use it here.
+# For development use `make local-e2e`, which settles on a local anvil.
+#
+# Verified on chain 1 (2026-09-04):
+#   registry.getTokenNetwork(ANYONE) -> 0xc24a18f1...4ec60fa8, and ANYONE
+#   reports 18 decimals. The connector re-checks both at boot and refuses to
+#   start if either has changed.
+#
+# The public RPC below is fine for a trial and wrong for production: it is rate
+# limited and shared. Point this at your own node.
+# ============================================================================
 [settlement.evm]
-rpc_url = "https://base-sepolia-rpc.publicnode.com"
-contract_address = "0x0c41D9D424d6B075A3cEa1068a694f7847a8CCa5"
-token_address = "0x49beE1Bca5d15Fb0963117923403F9498119a9Ce"
-decimals = 6
+rpc_url = "https://ethereum-rpc.publicnode.com"
+contract_address = "0x61d31e7Fd9a57A0611e29Bd7eB162f15AC8B3427"
+token_address = "0xFeAc2Eae96899709a43E252B6B92971D32F9C0F9"
+decimals = 18
 
 [settlement.evm.key]
 key_file = "/app/data/evm.key"

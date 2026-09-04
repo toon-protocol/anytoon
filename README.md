@@ -68,7 +68,28 @@ which that deploy pre-funds with mock USDC.
 
 ---
 
-## 3. Deploying against a testnet
+## 3. Deploying
+
+> **The default configuration settles on Ethereum mainnet, in ANYONE. That is
+> real money.** `config/connector.toml` points at chain 1; `data/evm.key` pays
+> real gas and holds this node's real earnings. The keys `make keys` generates
+> are throwaway and are not suitable for it. For development, use
+> `make local-e2e`, which settles on a local anvil and costs nothing.
+
+### Networks
+
+| Network | Registry | Token | Decimals |
+|---|---|---|---|
+| **Ethereum mainnet** (chain 1, default) | `0x61d31e7F…8B3427` | ANYONE `0xFeAc2Eae…F9C0F9` | 18 |
+| Base Sepolia (chain 84532) | `0x0c41D9D4…7a8CCa5` | USDC `0x49beE1Bc…119a9Ce` | 6 |
+| Local anvil (chain 31337) | `0xe7f1725E…bb3F0512` | mock USDC `0x5FbDB231…64180aa3` | 6 |
+
+The mainnet registry and token network were verified on chain before being
+made the default: `getTokenNetwork(ANYONE)` resolves to
+`0xc24a18F1…4ec60Fa8`, and ANYONE reports 18 decimals. The connector re-checks
+both at boot and refuses to start if either has changed.
+
+### Steps
 
 ```bash
 make keys                       # generate key material
@@ -86,12 +107,13 @@ Then fund the connector's settlement key. `make keys` writes it to
 A node that only receives needs gas alone. It banks claims off-chain and
 converts them with `redeem-latest` (§6).
 
+Replace the public RPC in `config/connector.toml` with your own node. The
+default is shared and rate limited: fine for a trial, wrong for production.
+
 Only the connector is published, on `127.0.0.1:3000`. The claim minter, the
 issuer and their datastores have no published ports and no route off the host.
 Put your own TLS termination in front of the connector; set
 `[node].http_endpoint` to that public URL, ending in `/ilp`.
-
----
 
 ## 4. Configuration
 
@@ -102,13 +124,21 @@ configured price. If these disagree, **every paid request returns 402**:
 
 | Where | Setting | Value |
 |---|---|---|
-| `config/connector.toml` | `price` | `10000` base units |
+| `config/connector.toml` | `price` | `10000000000000000` base units |
 | `compose.yml`, claim-minter | `BUNDLE_PRICE` | `0.01` |
 | `compose.yml`, issuer | `BUNDLE_PRICE` | `0.01` |
 
-10000 base units ÷ 10⁶ (token decimals) = 0.01 for a bundle of 10 credentials.
-**Change all three together**, and recompute the base units if you change the
-token — the exponent is the token's `decimals()`, not a constant.
+10¹⁶ base units ÷ 10¹⁸ (ANYONE decimals) = 0.01 ANYONE for a bundle of 10
+credentials. **Change all three together.**
+
+Only the base-unit figure moves with the token; the decimal the minter signs
+and the issuer checks stays `0.01`. That is why `config/connector.local.toml`
+carries `10000` — the same 0.01, against a 6-decimal token. Recompute it
+whenever the token changes: the exponent is the token's own `decimals()`, not
+a constant.
+
+0.01 ANYONE is a placeholder. Set a price that is commercially real for you
+before taking payment from anyone.
 
 ### Routes
 
@@ -147,17 +177,31 @@ All four must hold, or the connector refuses to start:
 4. The **price is recomputed** for the new exponent (§4.1). An 18-decimal token
    makes `10000` base units dust, not 0.01.
 
-Confirm 1 and 3 before editing anything:
+Confirm all three on-chain facts before editing anything. `0x313ce567` is
+`decimals()`; `0x9e455119` is `getTokenNetwork(address)`:
 
 ```bash
 RPC=<your rpc>
+TOKEN=<token>           # no 0x prefix in the padded argument below
+REGISTRY=<registry>
+
+# 1. the registry exists on this chain
 curl -s -X POST $RPC -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getCode","params":["<registry>","latest"]}'
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$REGISTRY\",\"latest\"]}"
+
+# 2. it has a token network for this token
 curl -s -X POST $RPC -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"<token>","data":"0x313ce567"},"latest"]}'
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"to\":\"$REGISTRY\",\"data\":\"0x9e455119000000000000000000000000${TOKEN:2}\"},\"latest\"]}"
+
+# 3. the token's own decimals
+curl -s -X POST $RPC -H 'content-type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"to\":\"$TOKEN\",\"data\":\"0x313ce567\"},\"latest\"]}"
 ```
 
-A `0x` result from either means the contract is not on that chain.
+A `0x` result from 1 means the contract is not on that chain. An all-zero
+address from 2 means the token has no network and cannot be settled in.
+Beware that a token can exist at the same address on several chains and be a
+different contract on each — check the chain you are actually configuring.
 
 ---
 
@@ -169,7 +213,7 @@ existing keys are kept, so re-running it is safe.
 | File | Held by | Purpose |
 |---|---|---|
 | `data/signer.key` | connector | Packet signing |
-| `data/evm.key` | connector | Settlement identity — **holds the node's earnings** |
+| `data/evm.key` | connector | Settlement identity — **on mainnet this holds real funds** |
 | `data/operator-bearer-token` | connector | Read access to the operator surface |
 | `data/operator-write-keys` | connector | Signs operator writes (fund, redeem) |
 | `data/keys/proxy.key.pem` | claim minter | Signs payment claims |
@@ -187,8 +231,11 @@ cannot read host files written at `0600` by another user, and the staging step
 names the four files explicitly so the epoch signing key cannot reach the
 connector even by accident.
 
-**These are dev and testnet keys.** The epoch signing key is the issuer's entire
-security story and belongs in Vault, mounted at runtime and rotated.
+**`make keys` produces development key material.** It is right for the local
+chain and for a testnet, and wrong for mainnet: the epoch signing key is the
+issuer's entire security story and belongs in Vault, mounted at runtime and
+rotated, and the settlement key on a live chain holds real funds. Generate
+those out of band and mount them in the same paths.
 
 ---
 

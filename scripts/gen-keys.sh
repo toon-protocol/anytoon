@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Generates every key the stack needs, into ./data. DEV AND TESTNET ONLY.
+# Generates every key the stack needs, into ./data. DEVELOPMENT KEYS.
 #
-# Nothing here is safe for production: the epoch signing key is the issuer's
-# whole security story and belongs in Vault, mounted at runtime and rotated.
-# These are throwaway keys for a chain where the money is not real.
+# Nothing here is safe for mainnet. The epoch signing key is the issuer's whole
+# security story and belongs in Vault, mounted at runtime and rotated, and the
+# settlement key on a live chain holds real funds. These are throwaway keys,
+# right for `make local-e2e` and for a testnet, wrong for real money.
 #
 # Idempotent: an existing key is left alone. Delete ./data to start over.
 set -euo pipefail
@@ -89,9 +90,14 @@ chmod 700 "$DATA" "$KEYS"
 find "$DATA" -type f -exec chmod 600 {} +
 
 echo
-echo "Done. Next:"
-echo "  1. Fund the connector's EVM key with Base Sepolia ETH (gas) and test USDC."
-echo "     The connector prints its settlement address on startup; it is also"
-echo "     visible at http://127.0.0.1:3000/ilp/identity once running."
-echo "  2. docker compose up -d"
-echo "  3. cd buyer && npm install && npm run buy"
+echo "Done. These are DEVELOPMENT keys."
+echo
+echo "  For local development, which costs nothing:"
+echo "    make local-e2e"
+echo
+echo "  The default config in config/connector.toml settles on ETHEREUM MAINNET"
+echo "  in ANYONE. Do not point these keys at it: generate the settlement key"
+echo "  and the epoch key out of band and mount them in the same paths."
+echo
+echo "  The settlement address appears in the settlements block of"
+echo "  http://127.0.0.1:3000/ilp once it is running."
