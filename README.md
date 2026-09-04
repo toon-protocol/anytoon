@@ -81,6 +81,7 @@ which that deploy pre-funds with mock USDC.
 | Network | Registry | Token | Decimals |
 |---|---|---|---|
 | **Ethereum mainnet** (chain 1, default) | `0x61d31e7F…8B3427` | ANYONE `0xFeAc2Eae…F9C0F9` | 18 |
+| Base mainnet (chain 8453) | `0x61d31e7F…8B3427` | USDC `0x833589fc…bdA02913` | 6 |
 | Base Sepolia (chain 84532) | `0x0c41D9D4…7a8CCa5` | USDC `0x49beE1Bc…119a9Ce` | 6 |
 | Local anvil (chain 31337) | `0xe7f1725E…bb3F0512` | mock USDC `0x5FbDB231…64180aa3` | 6 |
 
@@ -88,6 +89,18 @@ The mainnet registry and token network were verified on chain before being
 made the default: `getTokenNetwork(ANYONE)` resolves to
 `0xc24a18F1…4ec60Fa8`, and ANYONE reports 18 decimals. The connector re-checks
 both at boot and refuses to start if either has changed.
+
+**ANYONE settles on chain 1 only.** The token network is deployed at the same
+address on Base, but bound there to USDC, not ANYONE — the same contract
+address is a different binding on each chain. So the choice today is ANYONE on
+L1, or USDC on an L2.
+
+That matters for a micropayments node, because redemption costs L1 gas. It is
+not per request: a channel claim is cumulative, so many packets are banked
+off-chain and `redeem-latest` converts the running total in one transaction.
+Gas therefore amortises across everything since the last redemption — but the
+price per bundle still has to clear it at whatever cadence you redeem. Set the
+price accordingly, and redeem in batches rather than per sale.
 
 ### Steps
 
