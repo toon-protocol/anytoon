@@ -1,0 +1,89 @@
+# The local-chain twin of connector.toml.
+#
+# Identical in every way that matters -- same routes, same prices, same operator
+# surface -- except that it settles on a local anvil instead of Base Sepolia.
+# Used by `make local-up`, through compose.local.yml.
+#
+# Kept as a separate file because the connector reads exactly one TOML and has
+# no include. When you change a route or a price in connector.toml, change it
+# here too; `make local-e2e` is what catches the drift.
+
+# The connector in front of the Anyone Protocol credentials issuer.
+#
+# This node terminates its own routes and does not peer: see
+# docs/adr/0002-payment-reference-is-the-paying-channel-identity.md for why that
+# matters. Because nobody forwards to us, we always collect, so X-TOON-Payer is
+# always present on a delivery and the minter's fail-closed path is an assertion
+# rather than a routine outcome. Adding a peer is the change that forces that
+# decision to be revisited.
+
+client_edge_addr = "0.0.0.0:3000"
+state_dir = "/app/state"
+
+# The HTTP carriage must be exposed: a client selects its transport from the
+# carriages this node advertises, and "neither" leaves it with none to choose
+# (the client fails with TRANSPORT_REQUIRED before it sends anything).
+# Exposing a carriage is not peering: no peer is configured, so nothing
+# forwards to us and we always collect our own payments.
+peer_expose = "http"
+
+[signer]
+key_file = "/app/data/signer.key"
+
+[node]
+addresses = ["g.anyone.credentials"]
+# Required whenever a carriage is exposed, and deliberately without a default:
+# a node behind TLS termination cannot learn its own public name. This value is
+# for the local bundle. In a real deployment set it to the public URL, ending
+# in /ilp.
+http_endpoint = "http://127.0.0.1:3000/ilp"
+
+# --- Routes -----------------------------------------------------------------
+#
+# PRICE COUPLING: 10000 base units / 10^6 (USDC decimals) = 0.01 USDC, which
+# must equal the issuer's BUNDLE_PRICE exactly. The issuer verifies the amount
+# inside the signed claim against its own BUNDLE_PRICE, so if these three drift
+# -- this file, MINTER_BUNDLE_PRICE and ISSUER_BUNDLE_PRICE in compose.yml --
+# every paid request returns 402 CLAIM_INVALID. Change all three together.
+
+[[routes]]
+prefix = "g.anyone.credentials"
+handler_url = "http://claim-minter:8080/"
+price = 10000
+
+# The key document is free: a buyer needs the epoch key before it can blind
+# anything, and charging for it makes the protocol undiscoverable.
+#
+# The handler_url is scoped to /v1/keys/ ON PURPOSE. A request target resolves
+# BENEATH the handler path, so pointing this at the issuer root would let a
+# caller reach v1/bundles at price = 0 and break the issuer's invariant I6
+# ("no free class exists anywhere in this service"). Scoped here, `current` is
+# the only reachable target, and `..` is refused before the app is touched.
+[[routes]]
+prefix = "g.anyone.credentials.keys"
+handler_url = "http://issuer:3000/v1/keys/"
+price = 0
+
+# /healthz is deliberately NOT routed. The connector's own free, unauthenticated
+# /ilp/identity is the public liveness signal; the issuer's health stays inside.
+
+# The local anvil from the connector repository, not Base Sepolia. These two
+# addresses are deterministic: DeployLocal.s.sol puts the registry and the mock
+# USDC at the same place on every fresh chain. `connect` reads the token's own
+# decimals() and refuses to start if this disagrees.
+[settlement.evm]
+rpc_url = "http://anvil:8545"
+contract_address = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+token_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+decimals = 6
+
+[settlement.evm.key]
+key_file = "/app/data/evm.key"
+
+# Read endpoints need the bearer token; writes need an RFC 9421 signature from
+# one of the write keys. redeem-latest lives here, which is how collected claims
+# become on-chain money -- without it the node banks nothing. Reachable only on
+# the compose network: this surface is never published.
+[operator]
+bearer_token_file = "/app/data/operator-bearer-token"
+write_keys_file = "/app/data/operator-write-keys"

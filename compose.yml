@@ -1,0 +1,176 @@
+# The credentials issuer, behind the TOON connector.
+#
+# TRUST BOUNDARY: the connector is the only ingress. The minter, the issuer and
+# their datastores sit on an `internal` network with no published ports and no
+# route off the host, which is what authorises issuance -- the minter does not
+# and must not check X-TOON-Amount. See docs/adr/0001-a-claim-minter-not-a-fork.md.
+#
+# Dev and testnet only. `make keys` generates throwaway key material; production
+# needs Vault-issued epoch keys, managed datastores and real ingress. See README.
+
+name: anytoon
+
+services:
+  connector:
+    image: ghcr.io/toon-protocol/connector:rust-2026.08.28.1
+    # On Apple Silicon add: platform: linux/amd64
+    command: ['/app/config/connector.toml']
+    volumes:
+      - ./config/connector.toml:/app/config/connector.toml:ro
+      # Staged by connector-keys below, not bind-mounted: the connector runs as
+      # uid 10001 and could not read host keys kept at 0600.
+      - connector-keys:/app/data:ro
+      # MUST be a named volume. A host bind mount arrives root-owned and the
+      # connector refuses to start.
+      - connector-state:/app/state
+    ports:
+      - '127.0.0.1:3000:3000'
+    networks: [edge, backend]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/ilp/identity']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      connector-keys:
+        condition: service_completed_successfully
+      claim-minter:
+        condition: service_healthy
+
+  # Copies ONLY the connector's own keys into a volume it can read, then exits.
+  # Two reasons this is not a bind mount:
+  #   1. The connector runs as uid 10001; `make keys` writes host files as the
+  #      invoking user at 0600, which that uid cannot read.
+  #   2. It names the four files explicitly, so the epoch signing key in
+  #      data/keys/ cannot reach the connector even by accident.
+  connector-keys:
+    image: alpine:3
+    entrypoint:
+      - sh
+      - -c
+      - 'set -e; for f in signer.key evm.key operator-bearer-token operator-write-keys;
+         do cp /src/$$f /staged/$$f; done;
+         chown -R 10001:10001 /staged; chmod 700 /staged; chmod 600 /staged/*'
+    volumes:
+      - ./data:/src:ro
+      - connector-keys:/staged
+    restart: 'no'
+
+  claim-minter:
+    build: ./claim-minter
+    environment:
+      PORT: '8080'
+      ISSUER_URL: http://issuer:3000
+      PROXY_PRIVATE_KEY_PATH: /keys/proxy.key.pem
+      # Must equal ISSUER's BUNDLE_PRICE and match connector.toml's `price`.
+      BUNDLE_PRICE: '0.01'
+      ROUTE_ID: g.anyone.credentials
+    volumes:
+      - ./data/keys:/keys:ro
+    networks: [backend]
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      issuer:
+        condition: service_started
+
+  issuer:
+    image: ghcr.io/anyone-protocol/credentials-issuer:latest
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      # No DB_SYNCHRONIZE: the schema comes from the `migrate` service below,
+      # which runs the image's own TypeORM migrations exactly once.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      KEY_DOCUMENT_PATH: /keys/current.json
+      ISSUER_PRIVATE_KEY_PATH: /keys/current.pem
+      PROXY_PUBLIC_KEY_PATH: /keys/proxy.pub.pem
+      # Enforced against the signed claim amount. See connector.toml.
+      BUNDLE_PRICE: '0.01'
+      # A safety net, not a billing trap: a paid request answered 429 is money
+      # for nothing, and payment is the real rate limiter here.
+      RATE_LIMIT_MAX: '6000'
+      RATE_LIMIT_WINDOW_SECONDS: '60'
+    volumes:
+      # :z relabels for SELinux hosts; harmless elsewhere.
+      - ./data/keys:/keys:ro,z
+    networks: [backend]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Runs the schema migrations exactly once, then exits. The issuer waits for it
+  # to succeed, so no replica ever races another to migrate.
+  migrate:
+    image: ghcr.io/anyone-protocol/credentials-issuer:latest
+    entrypoint: ['bun', 'run', 'migration:run']
+    working_dir: /app/apps/backend
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: '5432'
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    networks: [backend]
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      # -h 127.0.0.1 forces a TCP check. Without it pg_isready talks to the
+      # local socket and passes against the temporary server the image runs
+      # during initdb, which does not listen on TCP -- so `migrate` starts and
+      # dies with ECONNREFUSED on a cold volume.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U app -d app']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  # Reaches the chain RPC and the outside world. Only the connector is on it.
+  edge:
+  # No route off the host. Everything that could mint or sign lives here.
+  backend:
+    internal: true
+
+volumes:
+  connector-keys:
+  connector-state:
+  postgres-data:
+  redis-data:

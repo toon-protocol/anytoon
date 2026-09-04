@@ -1,0 +1,16 @@
+{
+  "name": "@anytoon/buyer",
+  "private": true,
+  "type": "module",
+  "description": "Demo buyer: pays over TOON, receives blind-signed credentials.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "buy": "node src/buy.ts",
+    "verify-routes": "node src/verify-routes.ts",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@cloudflare/blindrsa-ts": "^0.4.6",
+    "@toon-protocol/client": "^2.1.1"
+  }
+}

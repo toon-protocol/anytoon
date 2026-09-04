@@ -1,0 +1,11 @@
+{
+  "name": "@anytoon/claim-minter",
+  "private": true,
+  "type": "module",
+  "description": "Mints the issuer's X-Payment-Claim from the connector's X-TOON-Payer attribution.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test 'test/*.test.ts'"
+  }
+}

@@ -1,0 +1,5 @@
+# Generated key material. Never commit: `make keys` regenerates it.
+/data/
+node_modules/
+.env
+/.local-chain/

@@ -1,0 +1,26 @@
+# Local-chain overlay: settle on anvil instead of Base Sepolia.
+#
+#   docker compose -f compose.yml -f compose.local.yml up -d
+#   (or: make local-up)
+#
+# The chain is the connector repository's own anvil, which deploys the
+# settlement contracts at deterministic addresses on start. Bring it up first:
+#
+#   git clone https://github.com/toon-protocol/connector
+#   cd connector && make anvil-up
+#
+# That creates the compose project `connector`, whose network this joins so the
+# connector reaches the chain by service name.
+
+services:
+  connector:
+    volumes:
+      - ./config/connector.local.toml:/app/config/connector.toml:ro
+      - connector-keys:/app/data:ro
+      - connector-state:/app/state
+    networks: [edge, backend, chain]
+
+networks:
+  chain:
+    external: true
+    name: connector_default
