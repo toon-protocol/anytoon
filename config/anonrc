@@ -1,0 +1,84 @@
+##=============== /etc/anon/anonrc -- anytoon's hidden service ===============##
+#
+# The daemon that gives this node its address. It generates the address,
+# publishes a descriptor for it, and forwards what arrives to the connector's
+# one listener. It opens no SOCKS port: this node is only ever dialed.
+#
+# The connector NEVER READS THIS FILE and never speaks this daemon's control
+# protocol (connector ADR 0070 decision 7). It is a sidecar, in the relationship
+# this stack already has with a chain node: infrastructure the node talks to,
+# never something it contains (decision 8). What crosses between them is one TCP
+# connection and one address an operator copied by hand.
+#
+# Mounted READ-ONLY at /etc/anon/anonrc.
+
+# WITHOUT THIS THE DAEMON DOES NOT START. `anon` refuses to run until the terms
+# are accepted, and in a non-interactive container it fails fast --
+# "User has not agreed to the terms and conditions. Exiting." -- rather than
+# prompting. It is the most common reason a first bring-up leaves a container
+# that exited at once beside a connector that looks healthy and is unreachable.
+AgreeToTerms 1
+
+# Drop from root to the image's own unprivileged user, whose home the
+# DataDirectory is. The entrypoint has already chowned it.
+User anond
+DataDirectory /var/lib/anon
+
+# EXPLICIT, and it cannot be dropped: the image's entrypoint APPENDS a Nickname
+# when it finds none, and this file is mounted read-only -- so a missing one is
+# a write failure at boot rather than a default.
+Nickname anytooncredentials
+
+# A SERVICE, not a relay and not a client. This node has no peers and no
+# pay-channels, so it opens no circuits of its own and needs no SOCKS port.
+# Nothing routes through it either.
+ClientOnly 1
+SocksPort 0
+ORPort 0
+DirPort 0
+ControlSocket 0
+
+# --- The address, and where it lives ----------------------------------------
+#
+# `anon` writes the generated address to HiddenServiceDir/hostname and keeps the
+# private key beside it. On v0.4.10.2 that address ends in `.anyone`, NOT
+# `.onion` -- the TLD was renamed, the rename is total, and the toon client
+# accepts `.anyone` alone. See anon-image/Dockerfile.
+#
+# THIS DIRECTORY IS INSIDE THE NAMED VOLUME compose mounts at /var/lib/anon, and
+# that is the whole point: unpersisted, this node's address would change on every
+# restart and every buyer's configuration would go stale SILENTLY -- their URL
+# still parses, and resolves to nothing.
+#
+# Keep it beside `state_dir` in your head. Both are operational state whose loss
+# is quiet and expensive; see README section 5.
+#
+# The key never leaves this volume and is never committed. A fixed key in a
+# repository is an address anyone who cloned it can impersonate.
+HiddenServiceDir /var/lib/anon/hidden_service
+
+# --- A FIXED IP, and it has to be -------------------------------------------
+#
+# `anon` resolves this target when it PARSES its config, not when a stream
+# arrives. A container name here aborts the daemon before it ever runs:
+#
+#     [warn] Unparseable address in hidden service port configuration.
+#     free(): invalid size
+#
+# ...because the connector does not exist yet. It cannot: its config names an
+# address only THIS daemon can generate, so the daemon must start first. The
+# fixed IP breaks that circle, and compose.yml pins the connector to it. (The
+# free() abort is an upstream bug in the error path; the warning above it is the
+# real message.)
+#
+# ONE port for the ONE listener. `client_edge_addr = "0.0.0.0:3000"` is the
+# single socket the connector binds, and `POST /ilp` on it is the client edge a
+# buyer pays through. An address is a host, so it is addressed the way any host
+# is -- port 80, and the path decides the rest.
+HiddenServicePort 80 172.31.0.10:3000
+
+# Twice, deliberately: stdout is where `docker compose logs` reads, and the file
+# is what the healthcheck greps for `Bootstrapped 100%`. A container that is Up
+# is not a container that has a circuit.
+Log notice stdout
+Log notice file /var/lib/anon/notice.log

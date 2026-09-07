@@ -1,0 +1,20 @@
+# Overlaid on the connector repository's own docker-compose.yml by `make
+# chain-up`, and it changes exactly one thing: the host port anvil is published
+# on.
+#
+# 18545, not 8545. That chain compose file hardcodes `8545:8545`, and 8545 is the
+# port every other local stack on a developer's machine already holds -- a second
+# one running is the difference between `make local-e2e` and
+#
+#   Bind for 127.0.0.1:8545 failed: port is already allocated
+#
+# which stops the run before anything is proved. The connector repository moved
+# its own hidden-service topology to 18545 for the same reason.
+#
+# NOTHING INSIDE THE COMPOSE NETWORK CARES: the connector reaches the chain as
+# `anvil:8545` over the shared network. This is only the door the BUYER uses,
+# because the buyer runs on the host.
+services:
+  anvil:
+    ports: !override
+      - '127.0.0.1:18545:8545'

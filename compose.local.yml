@@ -13,12 +13,30 @@
 # connector reaches the chain by service name.
 
 services:
+  # NO INGRESS HERE. The local chain settles on anvil over loopback and the
+  # buyer reaches the connector on 127.0.0.1, so there is nothing for an onion
+  # service to do -- and a gate that waits on a third-party anonymity network
+  # bootstrapping is a gate that goes red when that network has a bad day.
+  # `make local-e2e` stays cold-passing and offline-ish for exactly that reason;
+  # the connector repository keeps its own onion rehearsal off CI on the same
+  # argument. A profile no invocation enables is how an overlay switches off a
+  # service the base file defines.
+  anon:
+    profiles: ['never']
+  anon-client:
+    profiles: ['never']
+
   connector:
     volumes:
       - ./config/connector.local.toml:/app/config/connector.toml:ro
       - connector-keys:/app/data:ro
       - connector-state:/app/state
-    networks: [edge, backend, chain]
+    # Mapping form, because the base file uses it to pin this container's IP on
+    # `edge`. A list here would not merge onto that.
+    networks:
+      edge:
+      backend:
+      chain:
 
 networks:
   chain:

@@ -13,7 +13,11 @@ import { join } from 'node:path';
 import { ToonClient } from '@toon-protocol/client';
 
 import { blindBlanks, finalizeCredentials, importEpochKey, type KeyDocument } from './credentials.ts';
+import { hiddenServiceOptions } from './hidden-service.ts';
 
+// Loopback is the OPERATOR's console. A buyer elsewhere reaches this node at
+// its hidden-service address and needs a proxy to dial it:
+//   TOON_CONNECTOR=http://<addr>.anyone TOON_SOCKS_PROXY=socks5h://127.0.0.1:9050
 const CONNECTOR = process.env.TOON_CONNECTOR ?? 'http://127.0.0.1:3000';
 const BUNDLES_ROUTE = process.env.TOON_ROUTE ?? 'g.anyone.credentials';
 const KEYS_ROUTE = `${BUNDLES_ROUTE}.keys`;
@@ -43,6 +47,9 @@ const client = await ToonClient.create({
   deposit: DEPOSIT,
   autoOpenChannel: true,
   channelStore: process.env.TOON_CHANNEL_STORE ?? join(homedir(), '.toon', 'channels.json'),
+  // `{}` for a clearnet connector. For a hidden-service one this supplies the
+  // SOCKS5 proxy the client needs to dial it at all.
+  ...hiddenServiceOptions(CONNECTOR),
 });
 
 try {

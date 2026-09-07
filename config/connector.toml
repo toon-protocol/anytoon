@@ -1,5 +1,11 @@
 # The connector in front of the Anyone Protocol credentials issuer.
 #
+# THIS NODE IS REACHED AT A HIDDEN-SERVICE ADDRESS. It publishes no clearnet
+# endpoint and no public port: the `anon` sidecar in compose.yml is the ingress,
+# and `[node].http_endpoint` below is where buyers are told to find it. A
+# hidden-service endpoint hides WHERE THIS NODE IS REACHABLE and nothing else --
+# see the settlement block at the foot of this file, which is not covered by it.
+#
 # This node terminates its own routes and does not peer: see
 # docs/adr/0002-payment-reference-is-the-paying-channel-identity.md for why that
 # matters. Because nobody forwards to us, we always collect, so X-TOON-Payer is
@@ -23,10 +29,46 @@ key_file = "/app/data/signer.key"
 [node]
 addresses = ["g.anyone.credentials"]
 # Required whenever a carriage is exposed, and deliberately without a default:
-# a node behind TLS termination cannot learn its own public name. This value is
-# for the local bundle. In a real deployment set it to the public URL, ending
-# in /ilp.
-http_endpoint = "http://127.0.0.1:3000/ilp"
+# a node cannot learn its own public name. That is ADR 0050's shape, and it is
+# why this key exists at all.
+#
+# THE HOST BELOW IS A PLACEHOLDER, committed as one on purpose. The `anon`
+# sidecar generates the real address into its HiddenServiceDir/hostname the
+# first time it runs, and the OPERATOR copies it in -- the connector neither
+# reads that file nor speaks the daemon's control protocol (connector ADR 0070
+# decision 7). `make up` runs `scripts/hs-address.sh`, which plays the operator:
+# it reads the address and renders this file into
+# config/.rendered/connector.toml, WHICH IS WHAT COMPOSE MOUNTS. A placeholder
+# ends in `.anyone` too, so this committed file still loads through the real
+# parser.
+#
+# `.anyone`, NOT `.onion`. Anyone Protocol renamed the hidden-service TLD and
+# the rename is total: the daemon this stack runs writes `.anyone` and refuses
+# `.onion`, and the toon client rejects `.onion` by name because that is Tor and
+# not `anon`. See anon-image/Dockerfile.
+#
+# NO NEW KEY (decision 6): a hidden-service URL is a legal value for the
+# `http_endpoint` this section already had.
+#
+# AND NO `peer_allow_plaintext_endpoints`. The address IS the ed25519 public key
+# the circuit is authenticated to, so `http://` at such a host authenticates
+# itself -- more strongly than a CA-issued certificate for a DNS name does.
+# ADR 0004's requirement is satisfied by a different mechanism rather than
+# waived. `is_onion_endpoint` matches `.anyone` as well as `.onion` only since
+# issue #1284; on an older connector image this config would need that opt-in,
+# which is a loopback-and-test switch and must never be set here. That is why
+# compose.yml pins the image it does.
+http_endpoint = "http://placeholderplaceholderplaceholderplaceholderplaceholdera.anyone/ilp"
+
+# NO `socks_proxy`, and that is a decision rather than an omission. That key
+# selects a SOCKS5 proxy for OUTBOUND dials whose host is a hidden service
+# (decision 3). This node has no `[[peers]]` and no `[[pay_channels]]`: it
+# terminates its own routes and always collects, so it dials nothing over ILP
+# and the key would select nothing. Everything it does dial -- the settlement
+# RPC below, and `handler_url` above -- goes direct BY DESIGN (decision 4).
+#
+# Adding a peer is the change that forces this to be revisited, alongside the
+# payment-reference decision in ADR 0002.
 
 # --- Routes -----------------------------------------------------------------
 #
@@ -76,8 +118,12 @@ price = 0
 #   reports 18 decimals. The connector re-checks both at boot and refuses to
 #   start if either has changed.
 #
-# The public RPC below is fine for a trial and wrong for production: it is rate
-# limited and shared. Point this at your own node.
+# The public RPC below is fine for a trial and wrong for production, and on an
+# onion node it is wrong twice over. It is rate limited and shared -- and it is
+# also the one dial this node makes FROM ITS REAL ADDRESS while submitting the
+# transactions that redeem its earnings. An observer at that provider sees both
+# halves and can link them, which is the linkage an onion endpoint does not
+# close (connector ADR 0070 decision 4). Point this at your own node.
 # ============================================================================
 [settlement.evm]
 rpc_url = "https://ethereum-rpc.publicnode.com"
