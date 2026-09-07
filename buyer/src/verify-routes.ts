@@ -8,9 +8,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ToonClient } from '@toon-protocol/client';
+import { hiddenServiceOptions } from './hidden-service.ts';
+
+const CONNECTOR = process.env.TOON_CONNECTOR ?? 'http://127.0.0.1:3000';
 
 const client = await ToonClient.create({
-  connector: process.env.TOON_CONNECTOR ?? 'http://127.0.0.1:3000',
+  connector: CONNECTOR,
   mnemonic: process.env.TOON_MNEMONIC,
   evmPrivateKey: process.env.TOON_EVM_PRIVATE_KEY,
   rpcUrl: process.env.TOON_RPC_URL,
@@ -18,6 +21,10 @@ const client = await ToonClient.create({
   deposit: BigInt(process.env.TOON_DEPOSIT ?? '100000'),
   autoOpenChannel: true,
   channelStore: process.env.TOON_CHANNEL_STORE ?? join(homedir(), '.toon', 'channels.json'),
+  // These are the checks that would cost money or credentials quietly, so they
+  // have to run against the node as DEPLOYED. On a hidden-service-only node
+  // that means over the circuit: same env vars as `buy`.
+  ...hiddenServiceOptions(CONNECTOR),
 });
 
 let failures = 0;

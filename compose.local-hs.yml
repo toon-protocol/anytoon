@@ -1,0 +1,44 @@
+# The hidden-service ingress, rehearsed on a local chain.
+#
+#   make hs-e2e
+#
+# What this is for. `compose.local.yml` proves the STACK on anvil, over loopback,
+# with no daemon -- fast, and the gate that must stay green. This overlay proves
+# the INGRESS: the same node reached only at its `.anyone` address, paid by the
+# real toon client over a circuit, still settling on anvil so it costs nothing.
+#
+# It is deliberately not part of `make local-e2e`. A gate that waits on a
+# third-party anonymity network bootstrapping goes red when that network has a
+# bad day, which is "a test either runs or fails loudly" inverted rather than
+# honoured; the connector repository keeps its own hidden-service rehearsals off
+# CI on the same argument. Run this one on purpose.
+#
+# WHY REACHING IT AT ALL IS THE PROOF. A `.anyone` name cannot be resolved by
+# anything but the Anyone network -- no local resolver, no /etc/hosts, no docker
+# DNS. So unlike an IP, an address that answers has been reached over a circuit
+# by construction. `anon-client` sits on its own network with no route to the
+# connector as well, so the shortcut is impossible and not merely unused.
+
+services:
+  connector:
+    ports: !override []
+    # NO published port, unlike every other stack here. The claim this rehearsal
+    # makes is that the circuit is the only way in, and a published port is not
+    # one. It also means the health wait must ask docker rather than curl.
+    volumes:
+      # The rendered LOCAL-HS config: anvil settlement, hidden-service endpoint.
+      - ./config/.rendered/connector.local-hs.toml:/app/config/connector.toml:ro
+      - connector-keys:/app/data:ro
+      - connector-state:/app/state
+    # Mapping form, because the base file uses it to pin this container's IP on
+    # `edge` -- config/anonrc's HiddenServicePort names that address.
+    networks:
+      edge:
+      backend:
+      chain:
+
+networks:
+  # anvil, from the connector repository's own compose project.
+  chain:
+    external: true
+    name: connector_default

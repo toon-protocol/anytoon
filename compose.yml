@@ -1,9 +1,20 @@
-# The credentials issuer, behind the TOON connector.
+# The credentials issuer, behind the TOON connector, reached at an onion address.
 #
 # TRUST BOUNDARY: the connector is the only ingress. The minter, the issuer and
 # their datastores sit on an `internal` network with no published ports and no
 # route off the host, which is what authorises issuance -- the minter does not
 # and must not check X-TOON-Amount. See docs/adr/0001-a-claim-minter-not-a-fork.md.
+#
+# INGRESS: the `anon` sidecar publishes a v3 onion service for the connector's
+# one listener. There is no clearnet endpoint and no public port -- the circuit
+# is the only way in. `127.0.0.1:3000` is published for the operator's own
+# console (make buy, make verify-routes, the curls in README section 6) and is
+# not a route in from anywhere else.
+#
+# BRING IT UP WITH `make up`, not with a bare `docker compose up`. Two things
+# have to happen in order first: the daemon must generate an address, and that
+# address must be rendered into the config the connector mounts. See the `anon`
+# service below and scripts/onion-address.sh.
 #
 # Dev and testnet only. `make keys` generates throwaway key material; production
 # needs Vault-issued epoch keys, managed datastores and real ingress. See README.
@@ -12,11 +23,27 @@ name: anytoon
 
 services:
   connector:
-    image: ghcr.io/toon-protocol/connector:rust-2026.08.28.1
+    # A SHA PIN, deliberately, and it must be AT LEAST this commit. Two things
+    # landed in sequence and this stack needs both:
+    #   fe996af  the execution condition leaves the wire (ADR 0069) -- a
+    #            breaking client-edge change. @toon-protocol/client >= 3.0.0
+    #            vendored it; anything older is refused `invalid packet type
+    #            byte`, which reads like a transport fault and is not one.
+    #   97f45a0  `is_onion_endpoint` matches `.anyone` as well as `.onion`
+    #            (issue #1284, ADR 0070 as amended). WITHOUT IT a `.anyone`
+    #            endpoint needs `peer_allow_plaintext_endpoints = true`, which
+    #            is a loopback-and-test switch that must never be set here.
+    # `rust-release` still points at an older digest and no dated
+    # `rust-YYYY.MM.DD.N` tag carries either. Move to the next dated tag that
+    # does -- this pin is a stopgap, not a preference.
+    image: ghcr.io/toon-protocol/connector:rust-sha-97f45a0
     # On Apple Silicon add: platform: linux/amd64
     command: ['/app/config/connector.toml']
     volumes:
-      - ./config/connector.toml:/app/config/connector.toml:ro
+      # THE RENDERED CONFIG, not the committed one. config/connector.toml holds
+      # a placeholder .onion host; scripts/onion-address.sh reads the daemon's
+      # generated address and writes this file. `make up` runs it for you.
+      - ./config/.rendered/connector.toml:/app/config/connector.toml:ro
       # Staged by connector-keys below, not bind-mounted: the connector runs as
       # uid 10001 and could not read host keys kept at 0600.
       - connector-keys:/app/data:ro
@@ -24,8 +51,20 @@ services:
       # connector refuses to start.
       - connector-state:/app/state
     ports:
+      # LOOPBACK ONLY, and it is the operator's console rather than an ingress:
+      # `make buy`, `make verify-routes` and README section 6's curls use it.
+      # The runbook's gate (d) asks whether a dial could have reached this node
+      # any way but the circuit -- from off this host it could not, because
+      # nothing else is published and no clearnet endpoint is advertised.
       - '127.0.0.1:3000:3000'
-    networks: [edge, backend]
+    networks:
+      edge:
+        # FIXED, because config/anonrc's HiddenServicePort names this address
+        # and resolves it when the daemon PARSES its config -- long before this
+        # container exists. It cannot name `connector`: this node's config names
+        # an address only that daemon can generate, so the daemon starts first.
+        ipv4_address: 172.31.0.10
+      backend:
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/ilp/identity']
@@ -56,6 +95,103 @@ services:
       - ./data:/src:ro
       - connector-keys:/staged
     restart: 'no'
+
+  # --- The ingress -----------------------------------------------------------
+  # The daemon that gives this node its address. It generates the `.anyone`
+  # address, publishes a descriptor for it, and forwards what arrives to the
+  # connector's one listener (`HiddenServicePort 80 172.31.0.10:3000`).
+  #
+  # A SIDECAR, not something the connector contains: `anon` is a C daemon and
+  # the connector is one Rust binary, and the relationship is the one this stack
+  # already has with a chain node (connector ADR 0070 decision 8). The connector
+  # never reads this daemon's files and never speaks its control protocol; what
+  # crosses between them is one TCP connection and one address copied by hand.
+  #
+  # BUILT, not pulled: ghcr publishes no image for v0.4.10.2, and v0.4.9.7 --
+  # the newest tag there -- speaks the OLD `.onion` TLD that every buyer now
+  # refuses. See anon-image/Dockerfile.
+  #
+  # ON `edge`, WHICH IS NOT `internal`: the daemon has to reach the real Anyone
+  # network.
+  #
+  # NO `depends_on` EITHER WAY, deliberately. The connector does not need this
+  # daemon in order to serve -- it needs it in order to be REACHED, which is a
+  # different claim and one compose cannot express. `make up` orders them: the
+  # daemon first, because its address has to exist before the connector's config
+  # can be rendered.
+  anon:
+    build:
+      context: ./anon-image
+    image: anon-live:v0.4.10.2
+    init: true
+    volumes:
+      - ./config/anonrc:/etc/anon/anonrc:ro
+      # A NAMED VOLUME, and this is the expensive one to lose. It holds
+      # hidden_service/hostname and the private key behind this node's address.
+      # Unpersisted, the address changes on every restart and every buyer's
+      # configuration goes stale SILENTLY. Treat it exactly as you treat
+      # connector-state; README section 5 says so at length.
+      - anon-data:/var/lib/anon
+    networks: [edge]
+    restart: unless-stopped
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    healthcheck:
+      # Both halves, and neither alone is enough. The hostname file appears at
+      # key generation, seconds in and long before the descriptor is published;
+      # `Bootstrapped 100%` is what says the daemon can actually publish it. A
+      # container that is Up is not a container that has a circuit.
+      test:
+        - 'CMD-SHELL'
+        - "test -s /var/lib/anon/hidden_service/hostname && grep -q 'Bootstrapped 100%' /var/lib/anon/notice.log"
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  # --- The buyer's way in ------------------------------------------------------
+  # A SOCKS5 proxy and nothing else, published on the host's loopback. It is what
+  # the toon client's `socksProxy` names.
+  #
+  # NOT PART OF SERVING. An operator who only runs the node can delete this
+  # service; nothing above it depends on it. It exists so `make buy` and
+  # `make verify-routes` reach this node the way a REAL BUYER does -- by its
+  # `.anyone` address, over a circuit -- rather than over the loopback console.
+  #
+  # ON ITS OWN NETWORK, with no route to the connector. That is belt to the
+  # braces: a `.anyone` name cannot be resolved by anything but the Anyone
+  # network, so a packet that arrives at all arrived over a circuit. Being
+  # unable to reach `connector` directly makes the shortcut impossible as well
+  # as unused.
+  anon-client:
+    build:
+      context: ./anon-image
+    image: anon-live:v0.4.10.2
+    init: true
+    volumes:
+      - ./config/anonrc-client:/etc/anon/anonrc:ro
+      - anon-client-data:/var/lib/anon
+    networks: [payer]
+    ports:
+      # Loopback only. This is a way onto the Anyone network, not a route to the
+      # connector: nothing but the daemon can resolve a `.anyone` name.
+      #
+      # 19050, not 9050. An `anon` (or Tor) daemon on a developer's machine
+      # already holds 9050 more often than not, and a second one is
+      # `Bind for 127.0.0.1:9050 failed: port is already allocated` -- which
+      # stops the bring-up before anything is proved. Override with ANON_SOCKS_PORT.
+      - '127.0.0.1:${ANON_SOCKS_PORT:-19050}:9050'
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ['CMD-SHELL', "grep -q 'Bootstrapped 100%' /var/lib/anon/notice.log"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
 
   claim-minter:
     build: ./claim-minter
@@ -163,8 +299,16 @@ services:
       retries: 10
 
 networks:
-  # Reaches the chain RPC and the outside world. Only the connector is on it.
+  # Reaches the chain RPC, the Anyone network and the outside world. The
+  # connector and its `anon` sidecar are on it, and nothing else.
   edge:
+    ipam:
+      config:
+        # PINNED so config/anonrc's HiddenServicePort can name an address in it.
+        - subnet: 172.31.0.0/16
+  # The buyer's proxy, and nothing else. Deliberately holds no route to the
+  # connector: see `anon-client` above.
+  payer:
   # No route off the host. Everything that could mint or sign lives here.
   backend:
     internal: true
@@ -172,5 +316,9 @@ networks:
 volumes:
   connector-keys:
   connector-state:
+  # This node's `.anyone` address and the private key behind it. See `anon`
+  # above: losing this volume is losing the address, and no buyer is told.
+  anon-data:
+  anon-client-data:
   postgres-data:
   redis-data:

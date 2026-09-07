@@ -13,6 +13,35 @@ behind it, and seals the app's response back. It is the only ingress.
 
 Not "proxy" (ambiguous here — see **Fronting proxy**), and not "terminator".
 
+## Hidden-service endpoint
+
+The `.anyone` URL at which the **connector** is reachable, and the only way in.
+The address is a **host**: it is not a scheme, not a carriage and not a
+transport, and the connector's client edge behind one is the same client edge.
+
+The TLD is `.anyone`, and no other spelling is a synonym. `.onion` is Tor, which
+is a different network — the **anon daemon** routes `.anyone` and refuses
+`.onion`, and a buyer rejects a `.onion` address by name. A `.onion` address
+here is not a variant spelling; it means the daemon is the release from before
+the rename. `.anon` is not it either.
+
+Say what it hides and no more: a hidden-service endpoint hides **where this node
+is reachable**, and nothing else. Every claim names an on-chain channel and
+address, so who paid whom is on a public chain either way. The name "hidden
+service" invites the larger reading, and the settlement layer contradicts it.
+
+## Anon daemon
+
+The sidecar that holds this node's address and routes circuits to it.
+Infrastructure the connector talks to, never something it contains: the
+connector does not read the daemon's files and does not speak its control
+protocol, so the address reaches the config because an **operator** put it
+there.
+
+Anyone Protocol's `anon`. Not interchangeable with Tor here, despite the shared
+ancestry: the two route different TLDs, so the daemon a node runs decides the
+address every buyer must be told.
+
 ## App / handler
 
 Any ordinary HTTP service behind a **connector** route. An app is
@@ -33,6 +62,13 @@ Introduced by this repository; it exists in neither upstream project.
 The issuer's term for whatever sits in front of it and collects payment. It
 names a role, not a component: here that role is filled by the **connector** and
 the **claim minter** together. Avoid the term except when quoting upstream.
+
+"Proxy" now carries a third, unrelated sense in this stack — the SOCKS5 proxy
+through which a **hidden-service endpoint** is dialed. That one is outbound,
+this one is inbound, and neither is the "paid reverse proxy" sense the
+connector's own README uses. This node configures no SOCKS proxy: it has no
+peers, so it dials nothing over ILP. Its **buyers** each need one. Qualify the
+word every time, or use one of the other three terms.
 
 ## Issuer
 

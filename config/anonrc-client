@@ -1,0 +1,39 @@
+##============ /etc/anon/anonrc -- the BUYER's way onto the network ==========##
+#
+# A SOCKS5 proxy and nothing else. It publishes no service and relays nothing
+# for anyone; it exists so a buyer can resolve and dial a `.anyone` address.
+#
+# This is what the toon client's `socksProxy` names. It is NOT part of serving
+# credentials -- an operator who only runs the node does not need it. It is here
+# so that `make buy` and `make verify-routes` exercise the node the way a real
+# buyer reaches it, over the circuit, rather than over the loopback console.
+#
+# Mounted READ-ONLY at /etc/anon/anonrc.
+
+# WITHOUT THIS THE DAEMON DOES NOT START -- see config/anonrc.
+AgreeToTerms 1
+
+User anond
+DataDirectory /var/lib/anon
+
+# EXPLICIT for the same reason as the service daemon's: a read-only mount and an
+# entrypoint that would otherwise append one.
+Nickname anytoonbuyer
+
+# A CLIENT, not a relay: this opens circuits and carries nobody else's.
+ClientOnly 1
+ORPort 0
+DirPort 0
+ControlSocket 0
+
+# The one surface. Bound to 0.0.0.0 because compose publishes it to the host's
+# loopback, where the buyer runs; the policy below is the belt to that braces.
+SocksPort 0.0.0.0:9050
+SocksPolicy accept 10.0.0.0/8
+SocksPolicy accept 172.16.0.0/12
+SocksPolicy accept 192.168.0.0/16
+SocksPolicy accept 127.0.0.0/8
+SocksPolicy reject *
+
+Log notice stdout
+Log notice file /var/lib/anon/notice.log
