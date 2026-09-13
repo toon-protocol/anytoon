@@ -39,7 +39,10 @@ collects no money and authorises nothing.
 
 - [ADR 0001](docs/adr/0001-a-claim-minter-not-a-fork.md) — why this rather than a fork
 - [ADR 0002](docs/adr/0002-payment-reference-is-the-paying-channel-identity.md) — what the payment reference is
+- [ADR 0003](docs/adr/0003-the-bundle-price-stays-a-placeholder.md) — why the price is still 0.01, deliberately
+- [ADR 0004](docs/adr/0004-the-claim-minter-is-delivered-as-an-image.md) — why the minter is published rather than built from a checkout
 - [docs/payment-claim.md](docs/payment-claim.md) — the claim interface, which neither upstream project had written down
+- [docs/claim-minter-image.md](docs/claim-minter-image.md) — the published image: what to pin, and what the consumer must supply
 - [CONTEXT.md](CONTEXT.md) — glossary, because two systems here use the same words differently
 
 ---
@@ -235,8 +238,12 @@ carries `10000` — the same 0.01, against a 6-decimal token. Recompute it
 whenever the token changes: the exponent is the token's own `decimals()`, not
 a constant.
 
-0.01 ANYONE is a placeholder. Set a price that is commercially real for you
-before taking payment from anyone.
+0.01 ANYONE is a placeholder, and it stays one deliberately --
+[ADR 0003](docs/adr/0003-the-bundle-price-stays-a-placeholder.md) works through
+the gas floor, the `u64` ceiling and the coupling with the bundle size, so you
+do not have to derive them again. Set a price that is commercially real for you
+before taking payment from anyone, and record the redemption cadence it assumes
+beside it.
 
 ### Routes
 
@@ -584,6 +591,10 @@ compose.yml                   the stack, the trust boundary, and the ingress
 compose.local.yml             overlay: local chain, loopback, no daemon
 compose.local-hs.yml          overlay: local chain, reached only over a circuit
 claim-minter/                 the only new service (~200 lines, no dependencies)
+                              published as ghcr.io/toon-protocol/claim-minter
+packages/credentials/         @toon-protocol/credentials -- the buyer's half of
+                              the blind-signature protocol, published so that a
+                              second buyer imports it instead of copying it
 buyer/                        demo buyer: blind, pay, unblind, verify
 buyer/src/hidden-service.ts   deciding when a SOCKS5 proxy is needed, and why
 buyer/src/verify-routes.ts    negative checks against a running stack
@@ -591,6 +602,7 @@ scripts/gen-keys.sh           dev key material
 scripts/hs-address.sh      reads the daemon's address, renders the config
 scripts/verify-keys.ts        replays the issuer's boot checks locally
 docs/payment-claim.md         the claim interface, written down
+docs/claim-minter-image.md    pinning that image, and what it refuses to default
 docs/adr/                     why the minter exists; what the payment reference is
 CONTEXT.md                    glossary
 ```

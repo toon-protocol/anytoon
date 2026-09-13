@@ -134,10 +134,49 @@ export function createMinter(config: MinterConfig, signingKey: CryptoKey) {
   };
 }
 
+/**
+ * Refuse to boot, on one line. Every startup failure here is an operator's
+ * missing mount or missing variable rather than a bug, and in a published image
+ * the only thing they will ever see is `docker logs` -- where a Node stack
+ * trace reads like a crash and sends the reader into our source instead of into
+ * their compose file.
+ */
+function refuseToBoot(message: string): never {
+  console.error(`claim-minter: refusing to start: ${message}`);
+  process.exit(1);
+}
+
 /* node:test imports this module; only a direct run starts a listener. */
 if (import.meta.filename === process.argv[1]) {
-  const config = loadConfig();
-  const signingKey = await loadSigningKey(config.proxyPrivateKeyPath);
+  // NOTHING IS DEFAULTED, and that is deliberate in an image that other
+  // repositories pull. A baked BUNDLE_PRICE that disagreed with the issuer's
+  // would answer 402 on every paid request -- the issuer checks the amount
+  // against its own configured price -- and the symptom would name neither
+  // side. See docs/claim-minter-image.md.
+  let config: MinterConfig;
+  try {
+    config = loadConfig();
+  } catch (cause) {
+    refuseToBoot(
+      `${(cause as Error).message}. The image defaults none of BUNDLE_PRICE, ISSUER_URL, ` +
+        `PROXY_PRIVATE_KEY_PATH or ROUTE_ID; the consumer supplies all four.`,
+    );
+  }
+
+  // The key is mounted, never baked: this image is published, and the private
+  // half of the pair the issuer trusts is what admits issuance. A missing file
+  // here is an absent volume, so say that rather than repeating ENOENT alone.
+  let signingKey: CryptoKey;
+  try {
+    signingKey = await loadSigningKey(config.proxyPrivateKeyPath);
+  } catch (cause) {
+    refuseToBoot(
+      `cannot load the Ed25519 signing key from PROXY_PRIVATE_KEY_PATH=${config.proxyPrivateKeyPath} ` +
+        `(${(cause as Error).message}). Key material is mounted into this image, never built into it -- ` +
+        `check that the volume holding proxy.key.pem is present and readable by uid 1000 (node).`,
+    );
+  }
+
   createServer(createMinter(config, signingKey)).listen(config.port, () => {
     console.log(`claim minter on :${config.port} -> ${config.issuerUrl} (route ${config.routeId})`);
   });

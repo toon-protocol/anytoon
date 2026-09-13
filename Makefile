@@ -64,6 +64,7 @@ verify:
 	node scripts/verify-keys.ts
 
 test: keys
+	npm test --workspace @toon-protocol/credentials
 	cd claim-minter && npm test
 	cd buyer && npm test
 

@@ -194,7 +194,24 @@ services:
       start_period: 30s
 
   claim-minter:
+    # THE ONE SERVICE THIS REPOSITORY PUBLISHES, and so the only one carrying
+    # both keys. `build` is what an operator here runs: compose builds the
+    # context when the tag below is absent locally, and never reaches for the
+    # registry to satisfy it. `image` names that build with the published
+    # repository's own name, so what runs here and what another repository pulls
+    # are recognisably the same component.
+    #
+    # `dev`, because nothing publishes that tag. Releases are `v*` tags built by
+    # .github/workflows/claim-minter-image.yml, and a consumer pins the DIGEST --
+    # a tag can be moved afterwards and a digest cannot. Downstream that is one
+    # `image: ghcr.io/toon-protocol/claim-minter@sha256:...` line and no build
+    # context at all, which is what lets toon-protocol/infra delete its
+    # `require-anytoon-context` gate. See docs/claim-minter-image.md.
+    #
+    # A source edit does not invalidate the local `dev` tag: rebuild with
+    # `docker compose up -d --build claim-minter`.
     build: ./claim-minter
+    image: ghcr.io/toon-protocol/claim-minter:dev
     environment:
       PORT: '8080'
       ISSUER_URL: http://issuer:3000

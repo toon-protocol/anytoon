@@ -4,6 +4,10 @@
  * Invariant I1 forbids hand-rolled crypto: every protocol step runs inside
  * @cloudflare/blindrsa-ts. This module only sequences the library's calls and
  * handles encoding, so it can be tested without a running stack.
+ *
+ * It is deliberately the protocol and nothing else -- no client, no transport,
+ * no connector. Paying for issuance is the buyer's business; this package is
+ * the part every buyer has to get bit-identical to the issuer's.
  */
 import { RSABSSA } from '@cloudflare/blindrsa-ts';
 
@@ -28,6 +32,21 @@ export interface Blank {
   readonly inv: Uint8Array;
   /** base64 of the blinded blank, as the issuer expects it. */
   readonly blinded: string;
+}
+
+/**
+ * A finished credential: both halves, because both are needed later.
+ *
+ * `verify(key, signature, prepared)` is the check a relay makes, and `prepared`
+ * is not recoverable from `signature` -- it carries the randomizer the suite
+ * prefixed to the serial. A holder that persists only the signature has thrown
+ * away half of what it paid for.
+ */
+export interface Credential {
+  /** The randomizer-prefixed message the signature covers. */
+  readonly prepared: Uint8Array;
+  /** The unblinded signature, valid under the epoch key. */
+  readonly signature: Uint8Array;
 }
 
 export async function importEpochKey(doc: KeyDocument): Promise<CryptoKey> {
@@ -66,24 +85,27 @@ export async function blindBlanks(publicKey: CryptoKey, count: number): Promise<
  * Unblinds and verifies. `finalize` checks the signature against the epoch key,
  * so a stack that returns k blobs of garbage fails here rather than passing as
  * "we got k credentials back".
+ *
+ * Returns the pair, in the order the blanks were submitted: the issuer signs
+ * blanks positionally, so credential `i` belongs to blank `i`.
  */
 export async function finalizeCredentials(
   publicKey: CryptoKey,
   blanks: readonly Blank[],
   blindSignatures: readonly string[],
-): Promise<Uint8Array[]> {
+): Promise<Credential[]> {
   if (blindSignatures.length !== blanks.length) {
     throw new Error(`asked for ${blanks.length} signatures, got ${blindSignatures.length}`);
   }
 
-  const credentials: Uint8Array[] = [];
+  const credentials: Credential[] = [];
   for (const [i, blank] of blanks.entries()) {
-    const blindSig = new Uint8Array(Buffer.from(blindSignatures[i], 'base64'));
+    const blindSig = new Uint8Array(Buffer.from(blindSignatures[i]!, 'base64'));
     const signature = await suite.finalize(publicKey, blank.prepared, blindSig, blank.inv);
     if (!(await suite.verify(publicKey, signature, blank.prepared))) {
       throw new Error(`credential ${i} does not verify under the epoch key`);
     }
-    credentials.push(signature);
+    credentials.push({ prepared: blank.prepared, signature });
   }
   return credentials;
 }

@@ -9,10 +9,11 @@
   "scripts": {
     "buy": "node src/buy.ts",
     "verify-routes": "node src/verify-routes.ts",
+    "pretest": "npm --prefix ../packages/credentials run build",
     "test": "node --test 'test/*.test.ts'"
   },
   "dependencies": {
-    "@cloudflare/blindrsa-ts": "^0.4.6",
-    "@toon-protocol/client": "^3.0.0"
+    "@toon-protocol/client": "^3.0.0",
+    "@toon-protocol/credentials": "*"
   }
 }

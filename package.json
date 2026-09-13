@@ -1,0 +1,16 @@
+{
+  "name": "anytoon",
+  "private": true,
+  "description": "Workspace root. Exists so buyer/ can depend on packages/credentials by name rather than by copy.",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "buyer"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @toon-protocol/credentials",
+    "test": "npm test --workspaces --if-present"
+  }
+}
