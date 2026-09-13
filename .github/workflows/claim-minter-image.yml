@@ -1,0 +1,146 @@
+# Publishes ghcr.io/toon-protocol/claim-minter.
+#
+# The minter is the one component this repository introduces, and until this
+# workflow existed every consumer had to build it from a sibling checkout --
+# toon-protocol/infra carried an ANYTOON_CONTEXT variable and a
+# `require-anytoon-context` gate to say so. See docs/claim-minter-image.md for
+# what a consumer changes, and docs/adr/0004 for why the minter in particular.
+#
+# WHAT PUBLISHES: a pushed `v*` tag, and nothing else. A push to a branch builds
+# the image and throws it away, which is the point -- a Dockerfile that stopped
+# building would otherwise only be discovered at release.
+name: claim-minter image
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'claim-minter/**'
+      - '.github/workflows/claim-minter-image.yml'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/toon-protocol/claim-minter
+
+jobs:
+  # The minter's own suite: the claim's golden vector, the proxy's gate, and the
+  # boot refusals that keep key material and the price out of the image. It runs
+  # on every trigger, including a tag, because `publish` needs it.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # The same major the image runs. The minter has no dependencies and
+          # executes TypeScript directly, so the runtime IS the toolchain --
+          # a version that could not strip these types would fail here rather
+          # than in a published image.
+          node-version: '26'
+      - name: npm test
+        working-directory: claim-minter
+        run: npm test
+
+  publish:
+    # Gated on the suite, not merely ordered after it: a published digest is
+    # pinned by other repositories and cannot be withdrawn once pulled.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The only write this workflow needs. GITHUB_TOKEN with `packages: write`
+      # is what pushes to GHCR under this org; there is no PAT to rotate.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # BOTH ARCHITECTURES, because operators run this on Apple Silicon. The
+      # connector is pinned to an amd64-only digest and compose.yml tells those
+      # operators to add `platform: linux/amd64` for it -- doing the same to the
+      # minter would emulate a service that sits on the paid path for every
+      # request, so it is built native for both.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # `v1.2.3` publishes 1.2.3, 1.2 and 1 alongside latest. Those tags are
+          # for humans reading a release; the thing downstream pins is the
+          # digest below, which no later tag can move.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            # Not on a prerelease: `v1.0.0-rc.1` must not become the thing an
+            # unpinned consumer pulls by accident.
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./claim-minter
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The digest, where the person cutting the release can copy it. A consumer
+      # pins by digest and has no other way to learn it than a `docker buildx
+      # imagetools inspect` they should not have to run.
+      - name: Record the digest downstream pins
+        run: |
+          {
+            echo '## Published'
+            echo
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Multi-arch index digest: it resolves to linux/amd64 and linux/arm64,"
+            echo "so a consumer pins this one string on either machine."
+            echo
+            echo 'Tags also published (for humans; they move, the digest does not):'
+            echo
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+            echo
+            echo "Paste the digest into \`docs/claim-minter-image.md\` and into"
+            echo "\`toon-protocol/infra\`'s compose file; see that document for the"
+            echo "\`require-anytoon-context\` removal it unblocks."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+
+  # A tag is the only thing that publishes, so the Dockerfile is built here on
+  # every pull request and discarded. amd64 only: this proves the build, and
+  # proving the arm64 leg costs several minutes of QEMU on a path that publishes
+  # nothing. A break that is arm64-specific surfaces at the tag, which is the
+  # trade this makes knowingly.
+  build:
+    needs: test
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./claim-minter
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

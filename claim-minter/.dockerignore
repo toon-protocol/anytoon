@@ -1,0 +1,10 @@
+# The build context is what `docker build` uploads, and this image is published.
+# test/fixtures/ holds a real Ed25519 PRIVATE KEY -- a throwaway one, generated
+# to pin the golden vector in test/claim.test.ts, and still a private key one
+# stray `COPY . .` away from being in a public image. The Dockerfile names what
+# it copies, and this file means a later Dockerfile that does not cannot leak it.
+test/
+node_modules/
+npm-debug.log
+.dockerignore
+Dockerfile
