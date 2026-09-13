@@ -2,12 +2,22 @@
  * Proves the buyer's credential math against the epoch key `make keys` actually
  * generated -- blind, sign, unblind, verify -- with no stack running. If this
  * passes, a failure end to end is payment or transport, never the crypto.
+ *
+ * The protocol itself is @toon-protocol/credentials, and its own tests cover it
+ * against a key document they generate. What this file adds is the other half
+ * of the claim: that the package, as this buyer resolves it, agrees with the
+ * key material this repository's issuer will actually load.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { blindBlanks, finalizeCredentials, importEpochKey, suite } from '../src/credentials.ts';
+import {
+  blindBlanks,
+  finalizeCredentials,
+  importEpochKey,
+  suite,
+} from '@toon-protocol/credentials';
 
 const KEYS = new URL('../../data/keys/', import.meta.url).pathname;
 const BUNDLE_SIZE = 10;
@@ -53,7 +63,13 @@ test('a bundle round-trips against the generated epoch key', async () => {
 
   const credentials = await finalizeCredentials(publicKey, blanks, blindSignatures);
   assert.equal(credentials.length, BUNDLE_SIZE);
-  for (const credential of credentials) assert.equal(credential.length, 256);
+
+  // Both halves, and both usable on their own afterwards: a relay verifies
+  // `signature` against `prepared`, having never seen the blank or the serial.
+  for (const credential of credentials) {
+    assert.equal(credential.signature.length, 256);
+    assert.ok(await suite.verify(publicKey, credential.signature, credential.prepared));
+  }
 });
 
 test('a garbage signature is rejected, not counted', async () => {

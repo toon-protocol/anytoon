@@ -5,14 +5,21 @@
  *
  * The loop this proves: fetch the epoch key for free, blind k serials, pay for
  * issuance over ILP, unblind, verify. It is a demo and a smoke test, not an
- * SDK -- the interesting parts are in credentials.ts, which is unit-tested
- * without a running stack.
+ * SDK -- the protocol itself lives in @toon-protocol/credentials, which is
+ * unit-tested there without a running stack. What is demonstrated here is the
+ * paid path around it, which is this repository's business and not the
+ * package's.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ToonClient } from '@toon-protocol/client';
 
-import { blindBlanks, finalizeCredentials, importEpochKey, type KeyDocument } from './credentials.ts';
+import {
+  blindBlanks,
+  finalizeCredentials,
+  importEpochKey,
+  type KeyDocument,
+} from '@toon-protocol/credentials';
 import { hiddenServiceOptions } from './hidden-service.ts';
 
 // Loopback is the OPERATOR's console. A buyer elsewhere reaches this node at
@@ -110,7 +117,17 @@ try {
   };
   const credentials = await finalizeCredentials(publicKey, blanks, blind_signatures);
 
-  console.log(`\n  ${credentials.length} credentials, epoch ${epoch}, all verified.\n`);
+  // A credential is the pair, not the signature alone: `prepared` is the
+  // randomizer-prefixed serial the signature covers, and it is not recoverable
+  // from the signature. A buyer that kept these would have to persist both
+  // halves or fail the relay's check later. This one verified and exits, so it
+  // reports the shape and drops them.
+  const [first] = credentials;
+  console.log(
+    `\n  ${credentials.length} credentials, epoch ${epoch}, all verified.\n` +
+      `  each a (prepared, signature) pair of ${first?.prepared.length ?? 0}` +
+      ` and ${first?.signature.length ?? 0} bytes.\n`,
+  );
 } finally {
   await client.close();
 }
